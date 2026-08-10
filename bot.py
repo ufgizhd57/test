@@ -2,8 +2,10 @@ import os
 import re
 import json
 import html
+import base64
 import asyncio
 import logging
+
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, quote_plus
 
@@ -22,7 +24,10 @@ from openai import AsyncOpenAI
 # SETTINGS
 # ============================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    ""
+).strip()
 
 OPENAI_API_KEY = os.getenv(
     "OPENAI_API_KEY",
@@ -41,7 +46,10 @@ MODEL = os.getenv(
 
 try:
     ADMIN_ID = int(
-        os.getenv("ADMIN_ID", "0")
+        os.getenv(
+            "ADMIN_ID",
+            "0"
+        )
     )
 except Exception:
     ADMIN_ID = 0
@@ -58,12 +66,18 @@ memory = []
 prepared = {}
 
 
+# ============================================================
+# LOGGING
+# ============================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("gamefa")
+log = logging.getLogger(
+    "gamefa"
+)
 
 
 # ============================================================
@@ -71,35 +85,44 @@ log = logging.getLogger("gamefa")
 # ============================================================
 
 def load_memory():
-
     global memory
 
     try:
-
         memory = json.loads(
             MEMORY_FILE.read_text(
                 encoding="utf-8"
             )
         )
 
-        if not isinstance(memory, list):
+        if not isinstance(
+            memory,
+            list
+        ):
             memory = []
 
     except Exception:
-
         memory = []
 
 
 def save_memory():
 
-    MEMORY_FILE.write_text(
-        json.dumps(
-            memory[-MAX_MEMORY:],
-            ensure_ascii=False,
-            indent=2
-        ),
-        encoding="utf-8"
-    )
+    try:
+
+        MEMORY_FILE.write_text(
+            json.dumps(
+                memory[-MAX_MEMORY:],
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+
+    except Exception as error:
+
+        log.warning(
+            "Memory save error: %s",
+            error
+        )
 
 
 # ============================================================
@@ -142,27 +165,37 @@ def similarity(a, b):
     )
 
     if not a or not b:
-        return 0
+        return 0.0
 
-    return len(a & b) / len(a | b)
+    return len(
+        a & b
+    ) / len(
+        a | b
+    )
 
 
 def duplicate(text):
 
     for item in memory:
 
+        old_source = item.get(
+            "source",
+            ""
+        )
+
         if similarity(
             text,
-            item.get(
-                "source",
-                ""
-            )
+            old_source
         ) >= 0.82:
 
             return True
 
     return False
 
+
+# ============================================================
+# ADMIN
+# ============================================================
 
 def is_admin(message):
 
@@ -172,6 +205,10 @@ def is_admin(message):
         and message.from_user.id == ADMIN_ID
     )
 
+
+# ============================================================
+# URL
+# ============================================================
 
 def extract_url(text):
 
@@ -190,6 +227,10 @@ def extract_url(text):
     )
 
 
+# ============================================================
+# HTML
+# ============================================================
+
 def escape_html(text):
 
     return html.escape(
@@ -199,15 +240,11 @@ def escape_html(text):
 
 
 # ============================================================
-# PERSIAN START DETECTION
+# PERSIAN START
 # ============================================================
 
 PERSIAN_RE = re.compile(
     r"[\u0600-\u06FF]"
-)
-
-LATIN_RE = re.compile(
-    r"[A-Za-z]"
 )
 
 
@@ -216,7 +253,6 @@ def starts_with_persian(text):
     if not text:
         return False
 
-    # حذف فاصله و ایموجی‌های ابتدایی
     clean = text.strip()
 
     clean = re.sub(
@@ -228,11 +264,12 @@ def starts_with_persian(text):
     if not clean:
         return False
 
-    # اولین کاراکتر واقعی
     first = clean[0]
 
     return bool(
-        PERSIAN_RE.search(first)
+        PERSIAN_RE.search(
+            first
+        )
     )
 
 
@@ -241,19 +278,14 @@ def make_persian_start(
     is_title=False
 ):
 
-    """
-    اگر AI جمله را با انگلیسی شروع کند،
-    یک عبارت فارسی طبیعی قبل آن قرار می‌دهد.
-
-    این مرحله فقط برای اطمینان نهایی است.
-    """
-
     if not text:
         return text
 
     text = text.strip()
 
-    if starts_with_persian(text):
+    if starts_with_persian(
+        text
+    ):
         return text
 
     if is_title:
@@ -277,7 +309,7 @@ def format_post(ai_text):
 
     ai_text = ai_text or ""
 
-    # حذف Markdown bold
+    # حذف Markdown
     ai_text = re.sub(
         r"\*\*(.*?)\*\*",
         r"\1",
@@ -285,9 +317,15 @@ def format_post(ai_text):
         flags=re.S
     )
 
-    # حذف Markdown italic
     ai_text = re.sub(
         r"__(.*?)__",
+        r"\1",
+        ai_text,
+        flags=re.S
+    )
+
+    ai_text = re.sub(
+        r"`(.*?)`",
         r"\1",
         ai_text,
         flags=re.S
@@ -300,7 +338,6 @@ def format_post(ai_text):
         ai_text
     )
 
-    # حذف خطوط خالی
     lines = [
         x.strip()
         for x in ai_text.splitlines()
@@ -310,27 +347,26 @@ def format_post(ai_text):
     if not lines:
         return ""
 
-    # --------------------------------------------------------
+    # ========================================================
     # TITLE
-    # --------------------------------------------------------
+    # ========================================================
 
     title = lines[0]
 
-    # حذف ایموجی دسته‌بندی احتمالی
-    title_without_emoji = re.sub(
+    title = re.sub(
         r"^[🎮🎬📱]\s*",
         "",
         title
     ).strip()
 
     title = make_persian_start(
-        title_without_emoji,
+        title,
         is_title=True
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # BODY
-    # --------------------------------------------------------
+    # ========================================================
 
     body_lines = lines[1:]
 
@@ -338,7 +374,6 @@ def format_post(ai_text):
 
     for line in body_lines:
 
-        # حذف bullet قبلی
         line = re.sub(
             r"^\s*🟣\s*",
             "",
@@ -348,7 +383,6 @@ def format_post(ai_text):
         if not line:
             continue
 
-        # اطمینان از شروع فارسی
         line = make_persian_start(
             line,
             is_title=False
@@ -358,9 +392,9 @@ def format_post(ai_text):
             "🟣 " + line
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # CATEGORY
-    # --------------------------------------------------------
+    # ========================================================
 
     full_text = (
         title
@@ -370,41 +404,54 @@ def format_post(ai_text):
         )
     ).lower()
 
+    gaming_words = [
+        "بازی",
+        "گیم",
+        "گیمینگ",
+        "game",
+        "gaming",
+        "playstation",
+        "xbox",
+        "nintendo",
+        "steam",
+        "doom",
+        "gta",
+        "halo",
+        "resident evil",
+        "assassin",
+        "call of duty",
+        "spider-man",
+        "spiderman"
+    ]
+
+    movie_words = [
+        "فیلم",
+        "سریال",
+        "بازیگر",
+        "سینما",
+        "movie",
+        "film",
+        "series",
+        "season",
+        "actor",
+        "actress",
+        "netflix",
+        "hbo",
+        "amazon prime",
+        "disney",
+        "squid game"
+    ]
+
     if any(
         word in full_text
-        for word in [
-            "بازی",
-            "گیم",
-            "game",
-            "gaming",
-            "playstation",
-            "xbox",
-            "nintendo",
-            "steam",
-            "doom",
-            "gta",
-            "resident evil",
-            "halo"
-        ]
+        for word in gaming_words
     ):
 
         category = "🎮"
 
     elif any(
         word in full_text
-        for word in [
-            "فیلم",
-            "سریال",
-            "بازیگر",
-            "movie",
-            "film",
-            "series",
-            "season",
-            "actor",
-            "actress",
-            "netflix",
-            "hbo"
-        ]
+        for word in movie_words
     ):
 
         category = "🎬"
@@ -413,19 +460,15 @@ def format_post(ai_text):
 
         category = "📱"
 
-    # --------------------------------------------------------
-    # FINAL TITLE
-    # --------------------------------------------------------
+    # ========================================================
+    # FINAL
+    # ========================================================
 
     title = (
         category
         + " "
         + title
     )
-
-    # --------------------------------------------------------
-    # FINAL POST
-    # --------------------------------------------------------
 
     result = (
         "<b>"
@@ -454,12 +497,14 @@ def format_post(ai_text):
 
 
 # ============================================================
-# GAMEFA ARTICLE FETCH
+# GAMEFA ARTICLE
 # ============================================================
 
 async def fetch_gamefa(url):
 
-    parsed = urlparse(url)
+    parsed = urlparse(
+        url
+    )
 
     if (
         "gamefa.com"
@@ -507,7 +552,7 @@ async def fetch_gamefa(url):
         "html.parser"
     )
 
-    # حذف عناصر غیرمتنی
+    # حذف عناصر اضافی
     for element in soup(
         [
             "script",
@@ -523,11 +568,13 @@ async def fetch_gamefa(url):
 
         element.decompose()
 
-    # --------------------------------------------------------
+    # ========================================================
     # TITLE
-    # --------------------------------------------------------
+    # ========================================================
 
-    h1 = soup.find("h1")
+    h1 = soup.find(
+        "h1"
+    )
 
     if h1:
 
@@ -547,9 +594,9 @@ async def fetch_gamefa(url):
 
         title = ""
 
-    # --------------------------------------------------------
+    # ========================================================
     # DESCRIPTION
-    # --------------------------------------------------------
+    # ========================================================
 
     description = ""
 
@@ -578,9 +625,9 @@ async def fetch_gamefa(url):
 
             break
 
-    # --------------------------------------------------------
-    # IMAGE
-    # --------------------------------------------------------
+    # ========================================================
+    # SOURCE IMAGE
+    # ========================================================
 
     image = ""
 
@@ -609,9 +656,9 @@ async def fetch_gamefa(url):
 
             break
 
-    # --------------------------------------------------------
+    # ========================================================
     # BODY
-    # --------------------------------------------------------
+    # ========================================================
 
     article = (
         soup.find("article")
@@ -661,7 +708,7 @@ async def fetch_gamefa(url):
 
 
 # ============================================================
-# AI
+# AI NEWS
 # ============================================================
 
 PROMPT = """
@@ -669,65 +716,60 @@ PROMPT = """
 
 از اطلاعات داده‌شده یک پست فارسی آماده انتشار بساز.
 
-قوانین بسیار مهم:
+قوانین:
 
-1. خط اول فقط تیتر خبر باشد.
+1. خط اول فقط تیتر باشد.
 
-2. تیتر حتماً با یک کلمه یا عبارت فارسی شروع شود.
+2. تیتر حتماً با فارسی شروع شود.
 
-3. هیچ‌وقت تیتر را با نام انگلیسی شروع نکن.
-مثلاً این غلط است:
+3. تیتر نباید با نام انگلیسی شروع شود.
+
+غلط:
 Netflix نسخه آمریکایی Squid Game را...
 
-فرم درست:
+درست:
 نتفلیکس نسخه آمریکایی Squid Game را...
 
 4. متن خبر کاملاً فارسی و روان باشد.
 
-5. ابتدای هر پاراگراف حتماً فارسی باشد.
+5. ابتدای هر بند حتماً فارسی باشد.
 
-6. هیچ پاراگرافی را با نام انگلیسی، نام شرکت، نام بازی، نام فیلم یا نام شخص شروع نکن.
+6. هیچ بند را با نام انگلیسی شروع نکن.
 
-مثلاً این غلط است:
+غلط:
 David Fincher قرار است...
 
-فرم درست:
+درست:
 دیوید فینچر قرار است...
 
 یا:
 براساس گزارش‌ها، David Fincher قرار است...
 
-7. نام‌های انگلیسی را درون جمله حفظ کن.
+7. نام‌های انگلیسی را داخل جمله حفظ کن.
 
-8. نام بازی‌ها، فیلم‌ها، شرکت‌ها و افراد را در صورت نیاز با نام اصلی انگلیسی بنویس، اما هیچ‌کدام نباید اولین عبارت جمله باشند.
+8. اطلاعات ساختگی اضافه نکن.
 
-9. متن باید خبری، طبیعی و قابل انتشار باشد.
+9. خروجی فقط تیتر و متن خبر باشد.
 
-10. اطلاعات جدید و ساختگی اضافه نکن.
+10. Markdown تولید نکن.
 
-11. خروجی فقط شامل تیتر و متن خبر باشد.
+11. HTML تولید نکن.
 
-12. Markdown تولید نکن.
+12. لینک تولید نکن.
 
-13. HTML تولید نکن.
+13. @Gamefa_official تولید نکن.
 
-14. لینک تولید نکن.
+14. ایموجی 🟣 تولید نکن.
 
-15. منبع تولید نکن.
+15. برای بازی‌ها تیتر با 🎮 شروع شود.
 
-16. @Gamefa_official تولید نکن.
+16. برای فیلم و سریال تیتر با 🎬 شروع شود.
 
-17. ایموجی 🟣 تولید نکن.
+17. برای فناوری، هوش مصنوعی، موبایل و سخت‌افزار تیتر با 📱 شروع شود.
 
-18. اگر خبر مربوط به بازی است، تیتر با 🎮 شروع شود.
+18. بعد از ایموجی نیز اولین کلمه واقعی تیتر باید فارسی باشد.
 
-19. اگر خبر مربوط به فیلم یا سریال است، تیتر با 🎬 شروع شود.
-
-20. اگر خبر مربوط به فناوری، هوش مصنوعی، موبایل یا سخت‌افزار است، تیتر با 📱 شروع شود.
-
-21. بعد از ایموجی دسته‌بندی نیز باید اولین کلمه واقعی تیتر فارسی باشد.
-
-خروجی فقط این ساختار را داشته باشد:
+خروجی:
 
 تیتر
 
@@ -735,7 +777,9 @@ David Fincher قرار است...
 """
 
 
-async def generate_news(source):
+async def generate_news(
+    source
+):
 
     client = AsyncOpenAI(
         api_key=OPENAI_API_KEY
@@ -745,7 +789,7 @@ async def generate_news(source):
         model=MODEL,
         instructions=PROMPT,
         input=source,
-        max_output_tokens=1200
+        max_output_tokens=1400
     )
 
     return (
@@ -758,7 +802,9 @@ async def generate_news(source):
 # IMAGE DOWNLOAD
 # ============================================================
 
-async def download_image(url):
+async def download_image(
+    url
+):
 
     if not url:
         return None
@@ -767,7 +813,14 @@ async def download_image(url):
 
         headers = {
             "User-Agent":
-                "Mozilla/5.0"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/151 Safari/537.36",
+
+            "Accept":
+                "image/avif,image/webp,image/apng,"
+                "image/svg+xml,image/*,*/*;q=0.8"
         }
 
         timeout = aiohttp.ClientTimeout(
@@ -799,13 +852,12 @@ async def download_image(url):
 
                 data = await response.read()
 
-        # Telegram limit safety
-        if not (
-            1000
-            < len(data)
-            <= 15 * 1024 * 1024
-        ):
+        # رد تصاویر بسیار کوچک
+        if len(data) < 15 * 1024:
+            return None
 
+        # محدودیت حجم
+        if len(data) > 15 * 1024 * 1024:
             return None
 
         if (
@@ -819,14 +871,26 @@ async def download_image(url):
 
             extension = ".webp"
 
-        else:
+        elif "png" in content_type:
 
             extension = ".png"
 
+        else:
+
+            return None
+
         path = Path(
-            "gamefa_news_image"
+            "gamefa_image"
             + extension
         )
+
+        # جلوگیری از استفاده از فایل قبلی
+        if path.exists():
+
+            try:
+                path.unlink()
+            except Exception:
+                pass
 
         path.write_bytes(
             data
@@ -837,7 +901,7 @@ async def download_image(url):
     except Exception as error:
 
         log.warning(
-            "Image download error: %s",
+            "Image download failed: %s",
             error
         )
 
@@ -845,29 +909,36 @@ async def download_image(url):
 
 
 # ============================================================
-# WEB IMAGE SEARCH
+# BING IMAGE SEARCH
 # ============================================================
 
-async def search_image(query):
+async def image_search_candidates(
+    query
+):
 
     if not query:
-        return None
+        return []
 
-    # حذف ایموجی
     query = re.sub(
         r"[🎮🎬📱🟣]",
         "",
         query
     ).strip()
 
-    # محدودیت طول جست‌وجو
-    query = query[:250]
+    query = re.sub(
+        r"\s+",
+        " ",
+        query
+    )
+
+    query = query[:220]
 
     search_url = (
         "https://www.bing.com/images/search"
         "?q="
         + quote_plus(query)
         + "&form=HDRSC2"
+        + "&first=1"
     )
 
     headers = {
@@ -875,8 +946,13 @@ async def search_image(query):
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 "
             "(KHTML, like Gecko) "
-            "Chrome/151 Safari/537.36"
+            "Chrome/151 Safari/537.36",
+
+        "Accept-Language":
+            "en-US,en;q=0.9"
     }
+
+    candidates = []
 
     try:
 
@@ -894,7 +970,7 @@ async def search_image(query):
             ) as response:
 
                 if response.status != 200:
-                    return None
+                    return []
 
                 raw = await response.text(
                     errors="ignore"
@@ -905,11 +981,9 @@ async def search_image(query):
             "html.parser"
         )
 
-        candidates = []
-
-        # ----------------------------------------------------
-        # Bing metadata
-        # ----------------------------------------------------
+        # ====================================================
+        # Bing JSON
+        # ====================================================
 
         for item in soup.select(
             "a.iusc"
@@ -933,78 +1007,440 @@ async def search_image(query):
                     or info.get("turl")
                 )
 
+                page_url = info.get(
+                    "purl",
+                    ""
+                )
+
+                title = info.get(
+                    "t",
+                    ""
+                )
+
                 if image_url:
 
                     candidates.append(
-                        image_url
+                        {
+                            "image": image_url,
+                            "page": page_url,
+                            "title": title
+                        }
                     )
 
             except Exception:
                 continue
 
-        # ----------------------------------------------------
-        # Fallback
-        # ----------------------------------------------------
+    except Exception as error:
 
-        if not candidates:
+        log.warning(
+            "Bing search failed: %s",
+            error
+        )
 
-            for image in soup.find_all(
-                "img"
-            ):
+    # ========================================================
+    # Remove duplicates
+    # ========================================================
 
-                src = (
-                    image.get("src")
-                    or image.get("data-src")
+    unique = []
+
+    seen = set()
+
+    for item in candidates:
+
+        image_url = item[
+            "image"
+        ]
+
+        if image_url in seen:
+            continue
+
+        seen.add(
+            image_url
+        )
+
+        unique.append(
+            item
+        )
+
+    return unique[:15]
+
+
+# ============================================================
+# IMAGE SEARCH QUERIES
+# ============================================================
+
+def build_image_queries(
+    title,
+    body
+):
+
+    title = re.sub(
+        r"^[🎮🎬📱]\s*",
+        "",
+        title or ""
+    ).strip()
+
+    body = body or ""
+
+    queries = []
+
+    # --------------------------------------------------------
+    # Exact title
+    # --------------------------------------------------------
+
+    if title:
+
+        queries.append(
+            title + " official"
+        )
+
+    # --------------------------------------------------------
+    # English entities
+    # --------------------------------------------------------
+
+    english_terms = re.findall(
+        r"[A-Za-z][A-Za-z0-9'’\- ]{2,}",
+        title
+    )
+
+    if english_terms:
+
+        english_query = " ".join(
+            english_terms
+        ).strip()
+
+        if english_query:
+
+            queries.append(
+                english_query
+                + " official"
+            )
+
+            queries.append(
+                english_query
+                + " news"
+            )
+
+    # --------------------------------------------------------
+    # Title + news
+    # --------------------------------------------------------
+
+    if title:
+
+        queries.append(
+            title
+            + " news"
+        )
+
+    # --------------------------------------------------------
+    # Title + body
+    # --------------------------------------------------------
+
+    if body and title:
+
+        clean_body = re.sub(
+            r"\s+",
+            " ",
+            body
+        ).strip()
+
+        queries.append(
+            title
+            + " "
+            + clean_body[:100]
+        )
+
+    # --------------------------------------------------------
+    # Unique
+    # --------------------------------------------------------
+
+    result = []
+
+    seen = set()
+
+    for query in queries:
+
+        query = query.strip()
+
+        if not query:
+            continue
+
+        key = query.lower()
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        result.append(
+            query
+        )
+
+    return result[:5]
+
+
+# ============================================================
+# AI IMAGE SELECTION
+# ============================================================
+
+async def choose_best_image(
+    title,
+    body,
+    candidates
+):
+
+    if not candidates:
+        return None
+
+    if not OPENAI_API_KEY:
+
+        log.warning(
+            "OPENAI_API_KEY unavailable for image selection."
+        )
+
+        return None
+
+    client = AsyncOpenAI(
+        api_key=OPENAI_API_KEY
+    )
+
+    content = [
+        {
+            "type": "input_text",
+            "text": f"""
+تو انتخاب‌کننده تصویر برای کانال خبری Gamefa هستی.
+
+عنوان خبر:
+{title}
+
+متن خبر:
+{body[:3000]}
+
+تصاویر کاندید را بررسی کن.
+
+معیارها:
+
+- تصویر باید مستقیماً به موضوع خبر مرتبط باشد.
+- اگر خبر درباره یک بازی است، تصویر باید همان بازی یا شخصیت/رویداد مربوط به آن باشد.
+- اگر خبر درباره فیلم یا سریال است، تصویر باید همان فیلم/سریال یا افراد مرتبط با خبر باشد.
+- اگر خبر درباره یک شرکت است، تصویر باید به همان شرکت یا محصول مرتبط باشد.
+- تصویر باید برای انتشار خبری مناسب باشد.
+- تصاویر کاملاً نامرتبط را رد کن.
+- لوگوی صرف را ترجیح نده.
+- آواتار و عکس پروفایل را رد کن.
+- تصاویر تبلیغاتی نامرتبط را رد کن.
+- فن‌آرت نامرتبط را رد کن.
+- اگر چند تصویر مرتبط هستند، باکیفیت‌ترین و خبری‌ترین تصویر را انتخاب کن.
+- اگر هیچ تصویر مناسبی وجود ندارد، NO_IMAGE بده.
+
+فقط JSON معتبر برگردان:
+
+{{
+    "best": 1,
+    "score": 8,
+    "reason": "..."
+}}
+
+best شماره تصویر است و از 1 شروع می‌شود.
+
+اگر هیچ تصویر مناسب نیست:
+
+{{
+    "best": "NO_IMAGE",
+    "score": 0,
+    "reason": "..."
+}}
+"""
+        }
+    ]
+
+    valid_count = 0
+
+    for index, item in enumerate(
+        candidates,
+        start=1
+    ):
+
+        try:
+
+            path = Path(
+                item["path"]
+            )
+
+            data = path.read_bytes()
+
+            encoded = base64.b64encode(
+                data
+            ).decode(
+                "utf-8"
+            )
+
+            suffix = (
+                path.suffix
+                .lower()
+            )
+
+            if suffix == ".jpg":
+
+                mime = "image/jpeg"
+
+            elif suffix == ".webp":
+
+                mime = "image/webp"
+
+            else:
+
+                mime = "image/png"
+
+            content.append(
+                {
+                    "type": "input_text",
+                    "text":
+                        f"IMAGE {index}\n"
+                        f"Search result title: "
+                        f"{item.get('search_title', '')}\n"
+                        f"Source page: "
+                        f"{item.get('page', '')}"
+                }
+            )
+
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url":
+                        f"data:{mime};base64,{encoded}"
+                }
+            )
+
+            valid_count += 1
+
+        except Exception as error:
+
+            log.warning(
+                "Could not prepare image for AI: %s",
+                error
+            )
+
+    if valid_count == 0:
+        return None
+
+    try:
+
+        response = await client.responses.create(
+            model="gpt-4.1-mini",
+            input=[
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            max_output_tokens=300
+        )
+
+        result_text = (
+            response.output_text
+            or ""
+        ).strip()
+
+        log.info(
+            "Image AI response: %s",
+            result_text[:1000]
+        )
+
+        match = re.search(
+            r"\{.*\}",
+            result_text,
+            flags=re.S
+        )
+
+        if not match:
+            return None
+
+        result = json.loads(
+            match.group(0)
+        )
+
+        best = result.get(
+            "best"
+        )
+
+        if str(best).upper() == "NO_IMAGE":
+
+            log.info(
+                "AI rejected all candidate images."
+            )
+
+            return None
+
+        try:
+
+            best = int(best)
+
+        except Exception:
+
+            return None
+
+        try:
+
+            score = float(
+                result.get(
+                    "score",
+                    0
                 )
+            )
 
-                if (
-                    src
-                    and src.startswith(
-                        "http"
-                    )
-                ):
+        except Exception:
 
-                    candidates.append(
-                        src
-                    )
+            score = 0
 
-        # حذف تکراری
-        candidates = list(
-            dict.fromkeys(
-                candidates
+        # کمتر از 6 یعنی ارتباط کافی نیست
+        if score < 6:
+
+            log.info(
+                "Image score too low: %.1f",
+                score
+            )
+
+            return None
+
+        if not (
+            1
+            <= best
+            <= len(candidates)
+        ):
+
+            return None
+
+        selected = candidates[
+            best - 1
+        ]
+
+        log.info(
+            "Selected image %s | score %.1f | %s",
+            best,
+            score,
+            result.get(
+                "reason",
+                ""
             )
         )
 
-        # فقط 8 نتیجه
-        candidates = candidates[:8]
-
-        for image_url in candidates:
-
-            path = await download_image(
-                image_url
-            )
-
-            if path:
-
-                log.info(
-                    "Web image found: %s",
-                    image_url
-                )
-
-                return path
+        return selected["path"]
 
     except Exception as error:
 
         log.warning(
-            "Image search error: %s",
+            "AI image selection failed: %s",
             error
         )
 
-    return None
+        return None
 
 
 # ============================================================
-# FIND IMAGE
+# SMART IMAGE FINDER
 # ============================================================
 
 async def find_best_image(
@@ -1013,73 +1449,172 @@ async def find_best_image(
     body
 ):
 
-    # --------------------------------------------------------
-    # 1. IMAGE FROM SOURCE
-    # --------------------------------------------------------
+    # ========================================================
+    # 1. ORIGINAL ARTICLE IMAGE
+    # ========================================================
 
     if source_image:
 
-        path = await download_image(
+        log.info(
+            "Trying original article image."
+        )
+
+        original = await download_image(
             source_image
         )
 
-        if path:
+        if original:
 
             log.info(
-                "Using source image."
+                "Using original Gamefa image."
             )
 
-            return path
+            return original
 
-    # --------------------------------------------------------
-    # 2. SEARCH BY TITLE
-    # --------------------------------------------------------
+    # ========================================================
+    # 2. BUILD SEARCH QUERIES
+    # ========================================================
 
-    clean_title = re.sub(
-        r"^[🎮🎬📱]\s*",
-        "",
-        title or ""
-    ).strip()
+    queries = build_image_queries(
+        title,
+        body
+    )
 
-    if clean_title:
+    log.info(
+        "Image queries: %s",
+        queries
+    )
 
-        log.info(
-            "Searching image: %s",
-            clean_title
-        )
+    # ========================================================
+    # 3. SEARCH
+    # ========================================================
 
-        path = await search_image(
-            clean_title
-        )
+    all_candidates = []
 
-        if path:
-            return path
+    seen = set()
 
-    # --------------------------------------------------------
-    # 3. SEARCH BY TITLE + BODY
-    # --------------------------------------------------------
+    for query in queries:
 
-    if body:
-
-        query = (
-            clean_title
-            + " "
-            + body[:180]
-        )
-
-        path = await search_image(
+        results = await image_search_candidates(
             query
         )
 
-        if path:
-            return path
+        for item in results:
 
-    # --------------------------------------------------------
-    # 4. NO IMAGE
-    # --------------------------------------------------------
+            image_url = item[
+                "image"
+            ]
+
+            if image_url in seen:
+                continue
+
+            seen.add(
+                image_url
+            )
+
+            path = await download_image(
+                image_url
+            )
+
+            if not path:
+                continue
+
+            item["path"] = str(
+                path
+            )
+
+            item["search_title"] = (
+                item.get(
+                    "title",
+                    ""
+                )
+                or query
+            )
+
+            all_candidates.append(
+                item
+            )
+
+            if len(
+                all_candidates
+            ) >= 10:
+
+                break
+
+        if len(
+            all_candidates
+        ) >= 10:
+
+            break
+
+    # ========================================================
+    # 4. NOTHING FOUND
+    # ========================================================
+
+    if not all_candidates:
+
+        log.info(
+            "No image candidates found."
+        )
+
+        return None
 
     log.info(
-        "No suitable image found."
+        "Found %d image candidates.",
+        len(all_candidates)
+    )
+
+    # ========================================================
+    # 5. AI CHOICE
+    # ========================================================
+
+    selected = await choose_best_image(
+        title,
+        body,
+        all_candidates
+    )
+
+    selected_path = (
+        str(selected)
+        if selected
+        else ""
+    )
+
+    # ========================================================
+    # 6. DELETE UNUSED
+    # ========================================================
+
+    for item in all_candidates:
+
+        path = Path(
+            item["path"]
+        )
+
+        if (
+            path.exists()
+            and str(path)
+            != selected_path
+        ):
+
+            try:
+
+                path.unlink()
+
+            except Exception:
+                pass
+
+    # ========================================================
+    # 7. RESULT
+    # ========================================================
+
+    if selected:
+
+        return Path(
+            selected
+        )
+
+    log.info(
+        "No image passed relevance check."
     )
 
     return None
@@ -1106,9 +1641,9 @@ async def process_news(
 
     source = text
 
-    # --------------------------------------------------------
+    # ========================================================
     # URL
-    # --------------------------------------------------------
+    # ========================================================
 
     if url:
 
@@ -1136,19 +1671,19 @@ async def process_news(
             "URL:\n"
             + article["url"]
             + "\n\n"
-            "TITLE:\n"
+            + "TITLE:\n"
             + article["title"]
             + "\n\n"
-            "DESCRIPTION:\n"
+            + "DESCRIPTION:\n"
             + article["description"]
             + "\n\n"
-            "ARTICLE:\n"
+            + "ARTICLE:\n"
             + article["body"]
         )
 
-    # --------------------------------------------------------
-    # DUPLICATE CHECK
-    # --------------------------------------------------------
+    # ========================================================
+    # DUPLICATE
+    # ========================================================
 
     if duplicate(source):
 
@@ -1159,9 +1694,9 @@ async def process_news(
 
         return
 
-    # --------------------------------------------------------
-    # AI
-    # --------------------------------------------------------
+    # ========================================================
+    # AI NEWS
+    # ========================================================
 
     await message.answer(
         "✍️ در حال آماده‌سازی متن خبر..."
@@ -1181,9 +1716,9 @@ async def process_news(
             "متن تولیدشده خالی است."
         )
 
-    # --------------------------------------------------------
-    # TITLE FOR IMAGE SEARCH
-    # --------------------------------------------------------
+    # ========================================================
+    # TEXT FOR IMAGE SEARCH
+    # ========================================================
 
     plain_post = re.sub(
         r"<[^>]+>",
@@ -1211,12 +1746,24 @@ async def process_news(
         else article_body
     )
 
-    # --------------------------------------------------------
+    generated_title = re.sub(
+        r"^[🎮🎬📱]\s*",
+        "",
+        generated_title
+    ).strip()
+
+    generated_title = re.sub(
+        r"^🟣\s*",
+        "",
+        generated_title
+    ).strip()
+
+    # ========================================================
     # IMAGE
-    # --------------------------------------------------------
+    # ========================================================
 
     await message.answer(
-        "🖼 در حال بررسی تصویر خبر..."
+        "🖼 در حال انتخاب بهترین تصویر..."
     )
 
     image_path = await find_best_image(
@@ -1225,9 +1772,9 @@ async def process_news(
         generated_body
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # MEMORY
-    # --------------------------------------------------------
+    # ========================================================
 
     memory.append(
         {
@@ -1239,9 +1786,9 @@ async def process_news(
 
     save_memory()
 
-    # --------------------------------------------------------
+    # ========================================================
     # PREPARE
-    # --------------------------------------------------------
+    # ========================================================
 
     prepared[
         message.from_user.id
@@ -1254,9 +1801,9 @@ async def process_news(
         )
     }
 
-    # --------------------------------------------------------
+    # ========================================================
     # PREVIEW
-    # --------------------------------------------------------
+    # ========================================================
 
     if image_path:
 
@@ -1347,7 +1894,9 @@ async def stats(
 
     await message.answer(
         "📊 تعداد خبرهای ذخیره‌شده: "
-        + str(len(memory))
+        + str(
+            len(memory)
+        )
     )
 
 
@@ -1412,9 +1961,9 @@ async def publish(
             ""
         )
 
-        # ----------------------------------------------------
+        # ====================================================
         # WITH IMAGE
-        # ----------------------------------------------------
+        # ====================================================
 
         if (
             image
@@ -1445,9 +1994,9 @@ async def publish(
                     parse_mode=ParseMode.HTML
                 )
 
-        # ----------------------------------------------------
+        # ====================================================
         # WITHOUT IMAGE
-        # ----------------------------------------------------
+        # ====================================================
 
         else:
 
@@ -1456,6 +2005,12 @@ async def publish(
                 text,
                 parse_mode=ParseMode.HTML
             )
+
+        # حذف خبر آماده‌شده
+        prepared.pop(
+            message.from_user.id,
+            None
+        )
 
         await message.answer(
             "✅ خبر با موفقیت در کانال منتشر شد."
