@@ -1,4 +1,3 @@
-```python
 import os
 import re
 import json
@@ -1562,4 +1561,3 @@ if __name__ == "__main__":
     asyncio.run(
         main()
     )
-```
