@@ -19,6 +19,7 @@ from openai import AsyncOpenAI
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
