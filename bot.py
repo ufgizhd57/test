@@ -1,4 +1,3 @@
-```python
 import os, re, json, html, asyncio, logging
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -779,4 +778,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-```
