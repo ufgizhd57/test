@@ -1,46 +1,76 @@
-import os, re, json, html, asyncio, logging
+import os
+import re
+import json
+import html
+import asyncio
+import logging
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, quote_plus
 
 import aiohttp
 from bs4 import BeautifulSoup
+
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile
+
 from openai import AsyncOpenAI
 
 
+# =========================
+# SETTINGS
+# =========================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@Gamefa_official").strip()
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini").strip()
+CHANNEL_ID = os.getenv(
+    "CHANNEL_ID",
+    "@Gamefa_official"
+).strip()
+
+MODEL = os.getenv(
+    "OPENAI_MODEL",
+    "gpt-5.4-mini"
+).strip()
 
 try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = int(
+        os.getenv("ADMIN_ID", "0")
+    )
 except:
     ADMIN_ID = 0
 
 
-MEMORY_FILE = Path("news_memory.json")
+MEMORY_FILE = Path(
+    "news_memory.json"
+)
+
 MAX_MEMORY = 1500
 
 memory = []
 prepared = {}
 
 log = logging.getLogger("gamefa")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
 
+# =========================
+# MEMORY
+# =========================
+
 def load_memory():
     global memory
 
     try:
         memory = json.loads(
-            MEMORY_FILE.read_text(encoding="utf-8")
+            MEMORY_FILE.read_text(
+                encoding="utf-8"
+            )
         )
     except:
         memory = []
@@ -56,6 +86,10 @@ def save_memory():
         encoding="utf-8"
     )
 
+
+# =========================
+# TEXT / DUPLICATE
+# =========================
 
 def norm(s):
     s = re.sub(
@@ -78,7 +112,8 @@ def norm(s):
 
 
 def sim(a, b):
-    a, b = set(norm(a).split()), set(norm(b).split())
+    a = set(norm(a).split())
+    b = set(norm(b).split())
 
     if not a or not b:
         return 0
@@ -88,7 +123,10 @@ def sim(a, b):
 
 def duplicate(s):
     return any(
-        sim(s, x.get("source", "")) >= 0.82
+        sim(
+            s,
+            x.get("source", "")
+        ) >= 0.82
         for x in memory
     )
 
@@ -121,24 +159,15 @@ def esc(s):
     )
 
 
+# =========================
+# FORMAT POST
+# =========================
+
 def format_post(s):
-    """
-    تبدیل خروجی هوش مصنوعی به فرمت نهایی Gamefa
-
-    خروجی:
-
-    <b>🎮 تیتر خبر</b>
-
-    🟣 متن پاراگراف اول
-
-    🟣 متن پاراگراف دوم
-
-    <b>🆔 @Gamefa_official</b>
-    """
 
     s = s or ""
 
-    # حذف Markdown bold
+    # Remove Markdown bold
     s = re.sub(
         r"\*\*(.*?)\*\*",
         r"\1",
@@ -146,7 +175,7 @@ def format_post(s):
         flags=re.S
     )
 
-    # حذف __bold__
+    # Remove __bold__
     s = re.sub(
         r"__(.*?)__",
         r"\1",
@@ -154,41 +183,37 @@ def format_post(s):
         flags=re.S
     )
 
-    # حذف امضای احتمالی تولیدشده توسط AI
+    # Remove generated Gamefa ID
     s = re.sub(
         r"(?im)^\s*(?:🆔\s*)?@Gamefa_official\s*$",
         "",
         s
     )
 
-    # تمیز کردن خطوط خالی ابتدا و انتها
-    s = s.strip()
-
-    if not s:
-        return ""
-
-    # جدا کردن خطوط
-    raw_lines = [
+    lines = [
         x.strip()
         for x in s.splitlines()
         if x.strip()
     ]
 
-    if not raw_lines:
+    if not lines:
         return ""
 
-    # اولین خط = تیتر
-    title = raw_lines[0]
+    title = lines[0]
 
-    # بقیه = متن خبر
-    body_lines = raw_lines[1:]
+    # Keep paragraph structure
+    body_lines = lines[1:]
 
-    # اگر تیتر با ایموجی دسته‌بندی نشده بود،
-    # دسته‌بندی مناسب را اضافه کن.
-    if not re.match(r"^[🎮🎬📱]", title):
+    # Detect category
+    if not re.match(
+        r"^[🎮🎬📱]",
+        title
+    ):
 
         low = (
-            title + " " + " ".join(body_lines)
+            title
+            + " "
+            + " ".join(body_lines)
         ).lower()
 
         if any(
@@ -232,38 +257,32 @@ def format_post(s):
 
         title = emoji + " " + title
 
-    # ساخت پاراگراف‌های خبر
     paragraphs = []
 
     for line in body_lines:
 
-        line = line.strip()
-
-        if not line:
-            continue
-
-        # اگر AI خودش 🟣 گذاشته باشد،
-        # از ایجاد 🟣🟣 جلوگیری می‌کنیم.
         line = re.sub(
             r"^\s*🟣\s*",
             "",
             line
-        )
+        ).strip()
 
         if line:
             paragraphs.append(
                 "🟣 " + line
             )
 
-    # متن نهایی
     result = (
         f"<b>{esc(title)}</b>"
     )
 
     if paragraphs:
-        result += "\n\n" + "\n\n".join(
-            esc(p)
-            for p in paragraphs
+        result += (
+            "\n\n"
+            + "\n\n".join(
+                esc(x)
+                for x in paragraphs
+            )
         )
 
     result += (
@@ -274,9 +293,16 @@ def format_post(s):
     return result
 
 
+# =========================
+# GAMEFA FETCH
+# =========================
+
 async def fetch(url):
 
-    if "gamefa.com" not in urlparse(url).netloc.lower():
+    if (
+        "gamefa.com"
+        not in urlparse(url).netloc.lower()
+    ):
         raise ValueError(
             "فقط لینک Gamefa پشتیبانی می‌شود."
         )
@@ -284,15 +310,19 @@ async def fetch(url):
     headers = {
         "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 Chrome/151 Safari/537.36"
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/151 Safari/537.36"
     }
 
     async with aiohttp.ClientSession(
         headers=headers,
-        timeout=aiohttp.ClientTimeout(total=35)
-    ) as s:
+        timeout=aiohttp.ClientTimeout(
+            total=35
+        )
+    ) as session:
 
-        async with s.get(
+        async with session.get(
             url,
             allow_redirects=True
         ) as r:
@@ -327,7 +357,10 @@ async def fetch(url):
     h = soup.find("h1")
 
     title = (
-        h.get_text(" ", strip=True)
+        h.get_text(
+            " ",
+            strip=True
+        )
         if h
         else (
             soup.title.get_text(
@@ -341,39 +374,49 @@ async def fetch(url):
 
     desc = ""
 
-    for a in [
+    for attrs in [
         {"name": "description"},
         {"property": "og:description"},
         {"name": "twitter:description"}
     ]:
 
-        m = soup.find(
+        meta = soup.find(
             "meta",
-            attrs=a
+            attrs=attrs
         )
 
-        if m and m.get("content"):
-            desc = m["content"].strip()
+        if (
+            meta
+            and meta.get("content")
+        ):
+            desc = meta[
+                "content"
+            ].strip()
+
             break
 
     image = ""
 
-    for a in [
+    for attrs in [
         {"property": "og:image"},
         {"name": "twitter:image"},
         {"property": "og:image:url"}
     ]:
 
-        m = soup.find(
+        meta = soup.find(
             "meta",
-            attrs=a
+            attrs=attrs
         )
 
-        if m and m.get("content"):
+        if (
+            meta
+            and meta.get("content")
+        ):
             image = urljoin(
                 final,
-                m["content"].strip()
+                meta["content"].strip()
             )
+
             break
 
     article = (
@@ -412,6 +455,10 @@ async def fetch(url):
     }
 
 
+# =========================
+# AI
+# =========================
+
 PROMPT = """تو ویراستار خبر کانال Gamefa هستی.
 
 از منبع داده‌شده یک پست فارسی آماده انتشار بساز.
@@ -421,24 +468,28 @@ PROMPT = """تو ویراستار خبر کانال Gamefa هستی.
 - خط اول فقط تیتر کوتاه و خبری باشد.
 - تیتر حتماً با متن فارسی شروع شود.
 - بعد از تیتر فقط یک پاراگراف خبری بنویس.
-- متن روان، طبیعی و خلاصه اما کامل باشد.
+- متن روان، طبیعی، خبری و خلاصه اما کامل باشد.
 - اطلاعاتی که در منبع نیست اختراع نکن.
 - نام بازی‌ها، فیلم‌ها، شرکت‌ها و افراد با نام انگلیسی اصلی حفظ شود.
-- Markdown/HTML، لینک، منبع و امضا تولید نکن.
-- هیچ @Gamefa_official در خروجی قرار نده.
-- هیچ ایموجی 🟣 در خروجی قرار نده؛ این ایموجی توسط ربات اضافه می‌شود.
-- خبر بازی با 🎮، فیلم/سریال با 🎬 و فناوری/AI/سخت‌افزار با 📱 شروع شود.
-- خروجی فقط تیتر و متن خبر باشد.
+- Markdown و HTML تولید نکن.
+- لینک تولید نکن.
+- منبع و امضا تولید نکن.
+- @Gamefa_official تولید نکن.
+- ایموجی 🟣 تولید نکن.
+- خبر بازی با 🎮 شروع شود.
+- خبر فیلم و سریال با 🎬 شروع شود.
+- خبر فناوری، هوش مصنوعی و سخت‌افزار با 📱 شروع شود.
+- خروجی فقط تیتر و یک پاراگراف باشد.
 """
 
 
 async def ai(source):
 
-    c = AsyncOpenAI(
+    client = AsyncOpenAI(
         api_key=OPENAI_API_KEY
     )
 
-    r = await c.responses.create(
+    response = await client.responses.create(
         model=MODEL,
         instructions=PROMPT,
         input=source,
@@ -446,9 +497,14 @@ async def ai(source):
     )
 
     return (
-        r.output_text or ""
+        response.output_text
+        or ""
     ).strip()
 
+
+# =========================
+# IMAGE DOWNLOAD
+# =========================
 
 async def image_file(url):
 
@@ -457,36 +513,43 @@ async def image_file(url):
 
     try:
 
+        headers = {
+            "User-Agent":
+                "Mozilla/5.0"
+        }
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=30
             ),
-            headers={
-                "User-Agent":
-                    "Mozilla/5.0"
-            }
-        ) as s:
+            headers=headers
+        ) as session:
 
-            async with s.get(url) as r:
+            async with session.get(
+                url,
+                allow_redirects=True
+            ) as r:
 
-                if (
-                    r.status != 200
-                    or "image"
-                    not in r.headers.get(
+                if r.status != 200:
+                    return None
+
+                content_type = (
+                    r.headers.get(
                         "Content-Type",
                         ""
-                    )
-                ):
+                    ).lower()
+                )
+
+                if "image" not in content_type:
                     return None
 
                 data = await r.read()
 
-                content_type = r.headers.get(
-                    "Content-Type",
-                    ""
-                )
-
-        if not 1000 < len(data) <= 15 * 1024 * 1024:
+        if not (
+            1000
+            < len(data)
+            <= 15 * 1024 * 1024
+        ):
             return None
 
         if (
@@ -494,6 +557,10 @@ async def image_file(url):
             or "jpg" in content_type
         ):
             ext = ".jpg"
+
+        elif "webp" in content_type:
+            ext = ".webp"
+
         else:
             ext = ".png"
 
@@ -505,11 +572,245 @@ async def image_file(url):
 
         return p
 
-    except Exception:
+    except Exception as e:
+
+        log.warning(
+            "Image download failed: %s",
+            e
+        )
+
         return None
 
 
-async def process(m, text):
+# =========================
+# WEB IMAGE SEARCH
+# =========================
+
+async def search_web_image(query):
+
+    if not query:
+        return None
+
+    query = re.sub(
+        r"[🎮🎬📱]",
+        "",
+        query
+    ).strip()
+
+    # محدود کردن طول query
+    query = query[:250]
+
+    search_url = (
+        "https://www.bing.com/images/search?q="
+        + quote_plus(query)
+        + "&form=HDRSC2"
+    )
+
+    headers = {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/151 Safari/537.36"
+    }
+
+    try:
+
+        async with aiohttp.ClientSession(
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(
+                total=25
+            )
+        ) as session:
+
+            async with session.get(
+                search_url
+            ) as r:
+
+                if r.status != 200:
+                    return None
+
+                raw = await r.text(
+                    errors="ignore"
+                )
+
+        soup = BeautifulSoup(
+            raw,
+            "html.parser"
+        )
+
+        candidates = []
+
+        # Bing image results
+        for item in soup.select(
+            "a.iusc"
+        ):
+
+            metadata = item.get(
+                "m"
+            )
+
+            if not metadata:
+                continue
+
+            try:
+                info = json.loads(
+                    metadata
+                )
+
+                image_url = (
+                    info.get("murl")
+                    or info.get("turl")
+                )
+
+                if image_url:
+                    candidates.append(
+                        image_url
+                    )
+
+            except:
+                continue
+
+        # Fallback: direct image links
+        if not candidates:
+
+            for img in soup.find_all(
+                "img"
+            ):
+
+                src = (
+                    img.get("src")
+                    or img.get("data-src")
+                )
+
+                if (
+                    src
+                    and src.startswith(
+                        "http"
+                    )
+                ):
+                    candidates.append(
+                        src
+                    )
+
+        # حذف تکراری‌ها
+        candidates = list(
+            dict.fromkeys(
+                candidates
+            )
+        )
+
+        # فقط چند نتیجه اول
+        candidates = candidates[:8]
+
+        for image_url in candidates:
+
+            p = await image_file(
+                image_url
+            )
+
+            if p:
+                log.info(
+                    "Found web image: %s",
+                    image_url
+                )
+
+                return p
+
+    except Exception as e:
+
+        log.warning(
+            "Web image search failed: %s",
+            e
+        )
+
+    return None
+
+
+# =========================
+# FIND BEST IMAGE
+# =========================
+
+async def find_image(
+    original_url,
+    article_title,
+    generated_title,
+    body
+):
+
+    # -------------------------
+    # 1. Source image
+    # -------------------------
+
+    if original_url:
+
+        p = await image_file(
+            original_url
+        )
+
+        if p:
+            return p
+
+    # -------------------------
+    # 2. Search image
+    # -------------------------
+
+    clean_title = re.sub(
+        r"^[🎮🎬📱]\s*",
+        "",
+        generated_title or article_title
+    ).strip()
+
+    # استفاده از عنوان + بخش کوچکی
+    # از متن برای بهتر شدن جست‌وجو
+    search_query = clean_title
+
+    if body:
+        search_query += (
+            " "
+            + body[:180]
+        )
+
+    log.info(
+        "Searching image for: %s",
+        search_query
+    )
+
+    p = await search_web_image(
+        search_query
+    )
+
+    if p:
+        return p
+
+    # -------------------------
+    # 3. Search only title
+    # -------------------------
+
+    if body:
+
+        p = await search_web_image(
+            clean_title
+        )
+
+        if p:
+            return p
+
+    # -------------------------
+    # 4. No image
+    # -------------------------
+
+    return None
+
+
+# =========================
+# PROCESS NEWS
+# =========================
+
+async def process(
+    m,
+    text
+):
 
     u = url_of(text)
 
@@ -517,52 +818,132 @@ async def process(m, text):
 
     source = text
 
+    article_title = ""
+
+    article_body = ""
+
+    # -------------------------
+    # URL NEWS
+    # -------------------------
+
     if u:
 
         await m.answer(
             "⏳ در حال خواندن خبر و ساخت متن..."
         )
 
-        a = await fetch(u)
+        article = await fetch(
+            u
+        )
 
-        image = a["image"]
+        image = article[
+            "image"
+        ]
+
+        article_title = article[
+            "title"
+        ]
+
+        article_body = article[
+            "body"
+        ]
 
         source = (
-            f"URL: {a['url']}\n"
-            f"TITLE: {a['title']}\n"
-            f"DESCRIPTION: {a['desc']}\n"
-            f"ARTICLE:\n{a['body']}"
+            f"URL: {article['url']}\n"
+            f"TITLE: {article['title']}\n"
+            f"DESCRIPTION: {article['desc']}\n"
+            f"ARTICLE:\n{article['body']}"
         )
+
+    # -------------------------
+    # DUPLICATE
+    # -------------------------
 
     if duplicate(source):
 
         await m.answer(
-            "⚠️ این خبر یا یک خبر بسیار مشابه "
-            "قبلاً دریافت شده است."
+            "⚠️ این خبر یا یک خبر بسیار "
+            "مشابه قبلاً دریافت شده است."
         )
 
         return
 
+    # -------------------------
+    # AI
+    # -------------------------
+
+    ai_result = await ai(
+        source
+    )
+
     post = format_post(
-        await ai(source)
+        ai_result
     )
 
     if not post:
+
         raise RuntimeError(
             "متن تولیدشده خالی است."
         )
 
-    p = (
-        await image_file(image)
-        if image
-        else None
+    # -------------------------
+    # Extract generated title
+    # -------------------------
+
+    plain_post = re.sub(
+        r"<[^>]+>",
+        "",
+        post
     )
 
-    prepared[m.from_user.id] = {
+    post_lines = [
+        x.strip()
+        for x in plain_post.splitlines()
+        if x.strip()
+    ]
+
+    generated_title = (
+        post_lines[0]
+        if post_lines
+        else article_title
+    )
+
+    # -------------------------
+    # Extract body
+    # -------------------------
+
+    generated_body = (
+        " ".join(
+            post_lines[1:]
+        )
+        if len(post_lines) > 1
+        else article_body
+    )
+
+    # -------------------------
+    # FIND IMAGE
+    # -------------------------
+
+    p = await find_image(
+        image,
+        article_title,
+        generated_title,
+        generated_body
+    )
+
+    # -------------------------
+    # SAVE PREPARED
+    # -------------------------
+
+    prepared[
+        m.from_user.id
+    ] = {
         "text": post,
-        "image": str(p)
-        if p
-        else ""
+        "image": (
+            str(p)
+            if p
+            else ""
+        )
     }
 
     memory.append(
@@ -575,6 +956,10 @@ async def process(m, text):
 
     save_memory()
 
+    # -------------------------
+    # SEND PREVIEW
+    # -------------------------
+
     if p:
 
         try:
@@ -585,7 +970,7 @@ async def process(m, text):
                 parse_mode=ParseMode.HTML
             )
 
-        except:
+        except Exception:
 
             await m.answer(
                 post,
@@ -600,43 +985,73 @@ async def process(m, text):
         )
 
     await m.answer(
-        "✅ آماده انتشار است. "
+        "✅ خبر آماده انتشار است.\n"
         "برای ارسال به کانال /publish را بفرست."
     )
 
 
+# =========================
+# ROUTER
+# =========================
+
 router = Router()
 
 
-@router.message(Command("start"))
-async def start(m: Message):
+# =========================
+# START
+# =========================
+
+@router.message(
+    Command("start")
+)
+async def start(
+    m: Message
+):
 
     if not admin(m):
+
         return await m.answer(
             "این ربات خصوصی است."
         )
 
     await m.answer(
         "ربات Gamefa آماده است.\n\n"
-        "لینک Gamefa یا متن خبر را بفرست.\n"
+        "لینک Gamefa یا متن خبر را بفرست.\n\n"
         "/publish انتشار آخرین خبر\n"
         "/stats آمار\n"
         "/clear پاک‌کردن حافظه"
     )
 
 
-@router.message(Command("stats"))
-async def stats(m: Message):
+# =========================
+# STATS
+# =========================
+
+@router.message(
+    Command("stats")
+)
+async def stats(
+    m: Message
+):
 
     if admin(m):
 
         await m.answer(
-            f"خبرهای ذخیره‌شده: {len(memory)}"
+            f"خبرهای ذخیره‌شده: "
+            f"{len(memory)}"
         )
 
 
-@router.message(Command("clear"))
-async def clear(m: Message):
+# =========================
+# CLEAR
+# =========================
+
+@router.message(
+    Command("clear")
+)
+async def clear(
+    m: Message
+):
 
     if not admin(m):
         return
@@ -650,8 +1065,16 @@ async def clear(m: Message):
     )
 
 
-@router.message(Command("publish"))
-async def publish(m: Message):
+# =========================
+# PUBLISH
+# =========================
+
+@router.message(
+    Command("publish")
+)
+async def publish(
+    m: Message
+):
 
     if not admin(m):
         return
@@ -670,7 +1093,9 @@ async def publish(m: Message):
 
         if (
             x["image"]
-            and Path(x["image"]).exists()
+            and Path(
+                x["image"]
+            ).exists()
         ):
 
             try:
@@ -684,7 +1109,7 @@ async def publish(m: Message):
                     parse_mode=ParseMode.HTML
                 )
 
-            except:
+            except Exception:
 
                 await m.bot.send_message(
                     CHANNEL_ID,
@@ -712,8 +1137,16 @@ async def publish(m: Message):
         )
 
 
-@router.message(F.text)
-async def text(m: Message):
+# =========================
+# TEXT MESSAGE
+# =========================
+
+@router.message(
+    F.text
+)
+async def text(
+    m: Message
+):
 
     if not admin(m):
         return
@@ -737,19 +1170,26 @@ async def text(m: Message):
         )
 
 
+# =========================
+# MAIN
+# =========================
+
 async def main():
 
     if not BOT_TOKEN:
+
         raise RuntimeError(
             "BOT_TOKEN تنظیم نشده است."
         )
 
     if not OPENAI_API_KEY:
+
         raise RuntimeError(
             "OPENAI_API_KEY تنظیم نشده است."
         )
 
     if not ADMIN_ID:
+
         raise RuntimeError(
             "ADMIN_ID تنظیم نشده است."
         )
