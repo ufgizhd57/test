@@ -1,3 +1,4 @@
-python-telegram-bot==22.5
-aiohttp==3.12.15
-beautifulsoup4==4.13.4
+aiogram
+aiohttp
+beautifulsoup4
+openai
